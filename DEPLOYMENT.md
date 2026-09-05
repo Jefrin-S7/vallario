@@ -5,8 +5,8 @@ This stack deploys entirely on free tiers, no credit card required anywhere:
 | Piece | Where | Free tier |
 |---|---|---|
 | Next.js app (storefront + admin + API routes) | Vercel Hobby plan | Free forever for personal/non-commercial use |
-| Auth, Firestore | Firebase **Spark** plan | Free forever, generous daily quotas |
-| Digital product files (the actual purchasable zips) | Cloudflare R2 | 10GB storage free, **zero egress fees** |
+| Auth, Firestore | Firebase **Spark** plan | Free forever, generous daily quotas, **no card required** |
+| Digital product files (the actual purchasable zips) | Firebase Storage (default) or Cloudflare R2 (optional upgrade) | Both free — see the note below on which to pick |
 | Payments | Cashfree + PayPal **sandbox** | Free, unlimited test transactions |
 | Transactional email | Resend or Postmark free tier | 100–3,000 emails/month free |
 
@@ -16,22 +16,34 @@ usage. All of that logic (webhooks, entitlements, downloads, role changes)
 runs as Next.js API routes instead, which are free Vercel serverless
 functions. See `README.md` for exactly which files that logic lives in.
 
-**Firebase Storage is also intentionally not used**, even though it's
-technically available on Spark. Its free tier is small (5GB storage, 1GB/day
-download) and its paid tier bills per GB served — which adds up fast for a
-store where every single sale is a file download. Product marketing images
-(thumbnails, gallery shots) stay in `public/` and are served by Vercel for
-free, same as any static site asset. The actual purchasable files (the real
-deliverable zips/PDFs) go in Cloudflare R2 instead, which has no egress fee
-at all — see step 3.5 below.
+### Which storage should I use — Firebase Storage or Cloudflare R2?
+
+The app auto-detects this (`src/lib/storage/index.ts`) — you don't set a
+flag, you just configure one or the other:
+
+- **No S3_* env vars set → Firebase Storage automatically.** Uses the same
+  service account you already created for Auth/Firestore in step 1 below.
+  **No extra signup, no card, ever**, on the free Spark plan. Free quota is
+  smaller (5GB storage, ~1GB/day downloaded) and its paid Blaze tier bills
+  per GB served if you ever outgrow that — but that's a problem for a
+  successful store to have later, not a launch blocker. **This is the
+  right default if you don't have a card Cloudflare will accept** — several
+  providers, including Cloudflare, ask for one even on their free tier, and
+  in practice this rejects some debit/ATM-only cards (common outside the
+  US). If that's you, skip straight to step 2 and never look at R2.
+- **S3_* env vars set → Cloudflare R2 (or Backblaze B2, or Supabase
+  Storage).** Zero egress fees, which matters once you have real sales
+  volume and are serving a lot of downloads. Worth moving to later; not
+  required to launch.
 
 ## 1. Create the Firebase project (Spark/free plan)
 
 1. Go to [console.firebase.google.com](https://console.firebase.google.com) → **Add project**. Decline Google Analytics if asked (optional, doesn't affect cost).
 2. **Build → Authentication → Get started.** Enable **Email/Password** and **Google** sign-in methods.
 3. **Build → Firestore Database → Create database.** Start in production mode (the rules file below replaces the defaults). Pick any region.
-4. **Project settings (gear icon) → General.** Scroll to "Your apps" → add a **Web app**. Copy the config object — these become your `NEXT_PUBLIC_FIREBASE_*` values.
-5. **Project settings → Service accounts → Generate new private key.** This downloads a JSON file — its `project_id`, `client_email`, and `private_key` become `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`. **Never commit this file** — it's already in `.gitignore`, but double check before your first `git add`.
+4. **Build → Storage → Get started.** Same region as Firestore. This is free on Spark and needs no card — skip this step only if you're deliberately using Cloudflare R2 instead (step 3).
+5. **Project settings (gear icon) → General.** Scroll to "Your apps" → add a **Web app**. Copy the config object — these become your `NEXT_PUBLIC_FIREBASE_*` values.
+6. **Project settings → Service accounts → Generate new private key.** This downloads a JSON file — its `project_id`, `client_email`, and `private_key` become `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`. **Never commit this file** — it's already in `.gitignore`, but double check before your first `git add`.
 
 ## 2. Deploy security rules (no Blaze needed — rules are free on Spark)
 
@@ -39,18 +51,22 @@ at all — see step 3.5 below.
 npm install -g firebase-tools
 firebase login
 firebase use --add        # pick the project you just created
-firebase deploy --only firestore:rules
+firebase deploy --only firestore:rules,storage:rules
 ```
 
-This deploys `firebase/firestore.rules`. Skip `firebase deploy --only
-functions` and `storage:rules` entirely — `firebase/functions` and
-`firebase/storage.rules` are left in as a reference/optional path if you
-ever move to Blaze and want to use Firebase Storage for something; neither
-is required for the app to work as configured here.
+This deploys `firebase/firestore.rules` and `firebase/storage.rules` — both
+free on Spark. Skip `firebase deploy --only functions`; `firebase/functions`
+is left in only as a reference/optional path if you later move to Blaze.
 
-## 3. Set up Cloudflare R2 for product files (free, no egress fees)
+## 3. (Optional) Set up Cloudflare R2 for product files instead
 
-1. Sign up at [dash.cloudflare.com](https://dash.cloudflare.com) (free account).
+**Skip this entire section if you don't have a card Cloudflare will
+accept** — leave the `S3_*` variables blank in `.env.example` and the app
+automatically uses Firebase Storage from step 1 instead, at zero extra
+setup. Come back to this later if you want R2's zero-egress-fee advantage
+once you have real sales volume.
+
+1. Sign up at [dash.cloudflare.com](https://dash.cloudflare.com).
 2. **R2 Object Storage → Create bucket.** Name it anything, e.g. `vallario-products`.
 3. **R2 → Manage API Tokens → Create API Token.** Give it Object Read & Write permissions scoped to that bucket. Copy the **Access Key ID** and **Secret Access Key** — you only see the secret once.
 4. Your endpoint is `https://<account-id>.r2.cloudflarestorage.com` — the account ID is shown on the R2 overview page.
@@ -103,11 +119,12 @@ To make the products actually purchasable, also:
 
 1. Confirm the sync worked: `/admin/products` should show a green "Live
    Firestore" badge and list all 6 products with `source: "firestore"`.
-2. Upload each product's real deliverable file to Cloudflare R2 (or your
-   chosen S3-compatible provider — step 3) at
-   `products/{productId}/original/{fileName}`, and set that same `fileName`
-   field on the product's Firestore doc — `/api/downloads/sign` reads it
-   from there.
+2. Upload each product's real deliverable file to whichever storage backend
+   you're using — Firebase Storage console (Storage → your bucket, if you
+   skipped R2) or your R2 bucket dashboard (step 3, if you set that up) —
+   at `products/{productId}/original/{fileName}`, and set that same
+   `fileName` field on the product's Firestore doc — `/api/downloads/sign`
+   reads it from there.
 3. Marketing images (thumbnails, gallery) stay exactly where they are, in
    `public/products/` — no upload needed, Vercel serves them for free.
 

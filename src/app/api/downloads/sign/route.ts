@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb, isAdminConfigured } from "@/lib/firebase/admin";
-import { getSignedDownloadUrl, isStorageConfigured } from "@/lib/storage/s3";
+import { getSignedDownloadUrl } from "@/lib/storage";
 import { requireUser, UnauthenticatedError } from "@/lib/server/auth";
 import { writeAuditLog } from "@/lib/server/audit";
 
@@ -15,11 +15,10 @@ const SIGNED_URL_TTL_MINUTES = 15;
 // public URL for a digital product exists anywhere in this system. Checks,
 // in order: caller is authenticated; an entitlement for (uid, productId)
 // exists and isn't revoked; downloadsUsed < downloadLimit; the download
-// window (if set) hasn't expired. The signed URL itself is minted by
-// S3-compatible object storage (Cloudflare R2 etc — see src/lib/storage/s3.ts),
-// not Firebase Storage, to avoid Firebase Storage's per-GB egress costs on
-// what is, for this kind of store, the single most bandwidth-heavy action
-// in the whole app.
+// window (if set) hasn't expired. The signed URL itself comes from
+// whichever storage backend is configured — S3-compatible (R2/B2/Supabase)
+// if you set those env vars, otherwise Firebase Storage automatically
+// (see src/lib/storage/index.ts) — neither requires extra code here.
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser(req);
@@ -32,16 +31,6 @@ export async function POST(req: NextRequest) {
     if (!isAdminConfigured()) {
       return NextResponse.json(
         { message: "Firebase Admin isn't configured yet — see DEPLOYMENT.md." },
-        { status: 503 }
-      );
-    }
-    if (!isStorageConfigured()) {
-      return NextResponse.json(
-        {
-          message:
-            "Object storage isn't configured yet. Set S3_ENDPOINT, S3_ACCESS_KEY_ID, " +
-            "S3_SECRET_ACCESS_KEY, and S3_BUCKET_NAME — see DEPLOYMENT.md for free Cloudflare R2 setup.",
-        },
         { status: 503 }
       );
     }

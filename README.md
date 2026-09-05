@@ -29,7 +29,7 @@ required. Auth forms detect the missing Firebase config and run in a labeled
 | The 6 product images + logo | **Your real uploaded assets**, in `public/products` and `public/brand` |
 | Product catalog data (names, prices, what's included) | **Real**, matches your spec exactly — no fabricated review counts or sales figures |
 | Firestore security rules | **Real**, deploy-ready (`firebase/firestore.rules`) |
-| Digital product file storage | **Real**, via `src/lib/storage/s3.ts` — Cloudflare R2 or any S3-compatible provider, not Firebase Storage (see "Why not Firebase Storage" below) |
+| Digital product file storage | **Real**, via `src/lib/storage/index.ts` — auto-picks Cloudflare R2/S3-compatible if configured, otherwise Firebase Storage (no card needed) |
 | Payment webhooks, entitlement granting, download signing, role changes | **Real logic**, live at `src/app/api/**` — runs as free Vercel serverless functions, no Blaze plan needed |
 | Cloud Functions (`firebase/functions/`) | **Optional alternative** — same logic, only needed if you move to Firebase's paid Blaze plan later |
 | Admin/ERP: products, orders, customers, finance, coupons, reviews, support, audit logs | **Real**, live-Firestore-backed via `/api/admin/*` routes, with a graceful "not connected yet" fallback (shown via a real connection badge, not a hardcoded one) until you run Firebase setup |
@@ -37,16 +37,28 @@ required. Auth forms detect the missing Firebase config and run in a labeled
 | Payments (Cashfree/PayPal) | **Real integration** in `src/lib/payments/` — signature verification and webhook handling are implemented correctly; needs your real API keys to process a live payment |
 | Auth (email/password, Google) | Real Firebase Auth calls, but falls back to demo mode with no project connected |
 
-### Why not Firebase Storage
+### Which storage backend do I actually need?
 
-Firebase Storage's free tier is small (a few GB storage, ~1GB/day download)
-and its paid tier bills per GB served — which adds up fast for a store
-where every single sale is a file download. Marketing images (thumbnails,
-gallery shots) stay in `public/` and are served free by Vercel, same as any
-static site asset — they never needed Storage at all. The actual
-purchasable files go through `src/lib/storage/s3.ts`, a generic
-S3-compatible client that works with Cloudflare R2 (free egress — the best
-fit), Backblaze B2, or Supabase Storage. See DEPLOYMENT.md for setup.
+Neither is required to get the rest of the app working — this only matters
+once you want real file downloads to work. `src/lib/storage/index.ts` picks
+automatically:
+
+- **If `S3_ENDPOINT`/`S3_ACCESS_KEY_ID`/etc. are set**: uses that
+  S3-compatible provider (Cloudflare R2, Backblaze B2, Supabase Storage).
+  R2 specifically has zero egress fees, which matters most once you have
+  real sales volume — but several providers, including Cloudflare, ask for
+  a card on file even for their free tier, which is a real blocker if you
+  don't have one that works internationally.
+- **Otherwise**: falls back to Firebase Storage automatically, using the
+  same service account you already set up for Auth/Firestore — **no extra
+  signup, no card, ever**, on the free Spark plan. The quota is smaller
+  (5GB storage, ~1GB/day downloaded) and its paid Blaze tier bills per GB —
+  but that's a "deal with it once you outgrow it" problem, not a launch
+  blocker.
+
+Marketing images (thumbnails, gallery shots) always stay in `public/` and
+are served free by Vercel regardless of which backend you pick — they never
+touch either storage system.
 
 ## Getting it running locally
 
@@ -110,8 +122,10 @@ src/lib/storage/s3.ts       S3-compatible file storage (R2/B2/Supabase) —
                              NOT Firebase Storage
 src/lib/payments/           PaymentProvider abstraction (Cashfree, PayPal)
 firebase/firestore.rules    deny-by-default Firestore security rules
-firebase/storage.rules      OPTIONAL, unused by default — kept only for
-                             reference if you choose Firebase Storage anyway
+firebase/storage.rules      Storage security rules — used automatically as
+                             the download-signing fallback when no S3/R2
+                             credentials are set (no card required, unlike
+                             most S3-compatible providers' free tiers)
 firebase/functions/src/     OPTIONAL: Cloud Functions equivalents of the
                              src/app/api/ logic above — only needed on Blaze
 ```

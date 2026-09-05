@@ -60,7 +60,14 @@ export function adminAuth() {
   return getAuth(getAdminApp());
 }
 
-/** @deprecated Product downloads now use S3-compatible storage (see src/lib/storage) — Firebase Storage costs money past its small free tier. Kept only for anyone still using Firebase Storage for something else. */
+/**
+ * Firebase Storage — used automatically as the download-signing backend
+ * when no S3-compatible provider is configured (see src/lib/storage/index.ts).
+ * Its free Spark-plan quota is real but small (5GB storage, ~1GB/day
+ * downloaded); an S3-compatible provider with zero egress fees is worth
+ * moving to once you outgrow it, but this needs no extra signup or card to
+ * get started with.
+ */
 export function adminStorage() {
   return getStorage(getAdminApp()).bucket();
 }

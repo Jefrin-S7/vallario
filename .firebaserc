@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "vallario-7fa6d"
-  }
+    "default": "vallario-7fa6d",
+    "vallario": "vallario-7fa6d"
+  },
+  "targets": {},
+  "etags": {}
 }

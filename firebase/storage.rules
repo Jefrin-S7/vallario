@@ -1,0 +1,73 @@
+rules_version = '2';
+
+// VALLARIO — Firebase Storage Security Rules
+//
+// Two zones:
+//   /public/**    world-readable marketing + optimized product-card imagery
+//                 (thumbnails, gallery webp/avif variants) — never the raw
+//                 deliverable files.
+//   /products/**  the actual purchasable digital files (zips, PDFs, MP4s,
+//                 JSON workflow bundles). NEVER world-readable. Customers
+//                 never read this path directly — they always go through
+//                 the `/api/downloads/sign` route, which uses the Admin SDK
+//                 (bypasses these rules) to mint a short-lived signed URL
+//                 only after verifying: authenticated user + paid order +
+//                 live entitlement + download limit not exceeded.
+//   /media-library/** admin-only source uploads (the originals behind each
+//                 product's optimized variants).
+//
+// Deploy: firebase deploy --only storage:rules
+
+function isSignedIn() {
+  return request.auth != null;
+}
+
+function isStaffToken() {
+  // Custom claims (role) are set server-side via Admin SDK on the user's
+  // ID token — never trust a Firestore lookup inside Storage rules for
+  // performance reasons, so staff-write access relies on custom claims.
+  return isSignedIn() &&
+    request.auth.token.role in ['editor', 'inventory_manager', 'manager', 'admin', 'super_admin'];
+}
+
+function isAdminToken() {
+  return isSignedIn() && request.auth.token.role in ['admin', 'super_admin'];
+}
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Deny-by-default.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Optimized, public marketing/catalog imagery — thumbnails and gallery
+    // variants only. Safe to be world-readable; contains no deliverable content.
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if isStaffToken();
+    }
+
+    // Raw purchasable digital product files. Never readable by the client
+    // SDK, at any auth level — issuance happens exclusively through the
+    // Admin SDK from a verified-entitlement server route.
+    match /products/{productId}/original/{allPaths=**} {
+      allow read: if false;
+      allow write: if isStaffToken();
+    }
+
+    // Admin media library (source uploads before optimization/variant
+    // generation runs as a Cloud Function trigger).
+    match /media-library/{allPaths=**} {
+      allow read: if isStaffToken();
+      allow write: if isAdminToken();
+    }
+
+    // Per-user private uploads (e.g. support ticket attachments).
+    match /user-uploads/{userId}/{allPaths=**} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+      allow read: if isStaffToken();
+    }
+  }
+}

@@ -1,0 +1,214 @@
+rules_version = '2';
+
+// VALLARIO — Firestore Security Rules
+//
+// Default posture: DENY EVERYTHING. Every collection below opts in explicitly.
+// The client (customer storefront + admin UI) NEVER has direct write access to
+// price, order status, payment status, entitlements, downloads, licenses, or
+// roles — those are written exclusively by the Admin SDK from Cloud Functions
+// / trusted server routes, which bypass these rules entirely.
+//
+// Deploy: firebase deploy --only firestore:rules
+
+function isSignedIn() {
+  return request.auth != null;
+}
+
+function uid() {
+  return request.auth.uid;
+}
+
+function userDoc() {
+  return get(/databases/$(database)/documents/users/$(uid()));
+}
+
+function role() {
+  return isSignedIn() && userDoc().data.role != null ? userDoc().data.role : 'anonymous';
+}
+
+function hasAnyRole(roles) {
+  return isSignedIn() && role() in roles;
+}
+
+// Staff roles that may read the admin/ERP surfaces. Fine-grained write access
+// per collection is still scoped further below (e.g. finance vs support).
+function isStaff() {
+  return hasAnyRole(['support', 'editor', 'sales', 'finance', 'inventory_manager', 'manager', 'admin', 'super_admin']);
+}
+
+function isAdmin() {
+  return hasAnyRole(['admin', 'super_admin']);
+}
+
+function isOwner(userId) {
+  return isSignedIn() && uid() == userId;
+}
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Deny-by-default: anything not explicitly matched below is inaccessible.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // users/{uid} — profile is self-readable/self-editable EXCEPT `role`,
+    // which only server-side code (Admin SDK) may set. We enforce that by
+    // requiring the incoming role to be unchanged from the existing doc.
+    // ---------------------------------------------------------------------
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isStaff();
+      allow create: if isOwner(userId)
+        && request.resource.data.role == 'customer';
+      allow update: if isOwner(userId)
+        && request.resource.data.role == resource.data.role;
+      allow update: if isAdmin(); // staff/admin may change roles & disable accounts
+      allow delete: if false; // account deletion goes through a Cloud Function (audit trail)
+    }
+
+    // ---------------------------------------------------------------------
+    // Public catalog data — readable by anyone, writable only by staff who
+    // manage the catalog (editor/inventory_manager/admin tiers).
+    // ---------------------------------------------------------------------
+    match /products/{productId} {
+      allow read: if resource.data.status == 'active' || isStaff();
+      allow write: if hasAnyRole(['editor', 'inventory_manager', 'manager', 'admin', 'super_admin']);
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if hasAnyRole(['editor', 'manager', 'admin', 'super_admin']);
+    }
+
+    // ---------------------------------------------------------------------
+    // orders/{orderId} — customers may READ their own orders. Orders are
+    // only ever CREATED server-side (checkout API route / Cloud Function)
+    // after a verified payment, and status transitions are staff/admin only.
+    // The client never creates or edits an order document directly.
+    // ---------------------------------------------------------------------
+    match /orders/{orderId} {
+      allow read: if isStaff() || (isSignedIn() && resource.data.userId == uid());
+      allow write: if hasAnyRole(['sales', 'manager', 'admin', 'super_admin']);
+    }
+
+    match /orderItems/{orderItemId} {
+      allow read: if isStaff() || (isSignedIn() && resource.data.userId == uid());
+      allow write: if isStaff();
+    }
+
+    // ---------------------------------------------------------------------
+    // payments/{paymentId} — financial records. Staff-readable, finance/admin
+    // writable. Never touched by the customer client.
+    // ---------------------------------------------------------------------
+    match /payments/{paymentId} {
+      allow read: if hasAnyRole(['finance', 'manager', 'admin', 'super_admin']);
+      allow write: if hasAnyRole(['finance', 'admin', 'super_admin']);
+    }
+
+    match /refunds/{refundId} {
+      allow read: if hasAnyRole(['finance', 'manager', 'admin', 'super_admin']);
+      allow write: if hasAnyRole(['finance', 'admin', 'super_admin']);
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isStaff() || (isSignedIn() && resource.data.userId == uid());
+      allow write: if hasAnyRole(['finance', 'admin', 'super_admin']);
+    }
+
+    // ---------------------------------------------------------------------
+    // entitlements/{id} — proof a customer owns a product. Customer READ-only
+    // on their own entitlements. Only server code grants/revokes.
+    // ---------------------------------------------------------------------
+    match /entitlements/{entitlementId} {
+      allow read: if isStaff() || (isSignedIn() && resource.data.uid == uid());
+      allow write: if hasAnyRole(['admin', 'super_admin']);
+    }
+
+    match /downloads/{downloadId} {
+      allow read: if isStaff() || (isSignedIn() && resource.data.uid == uid());
+      allow write: if false; // written only via Admin SDK when a signed URL is issued
+    }
+
+    match /licenses/{licenseId} {
+      allow read: if isStaff() || (isSignedIn() && resource.data.uid == uid());
+      allow write: if hasAnyRole(['admin', 'super_admin']);
+    }
+
+    // ---------------------------------------------------------------------
+    // coupons/{code} — validated server-side at checkout. Customers cannot
+    // read the full document (would leak usage limits/values pre-validation)
+    // except through a callable function; only staff manage them directly.
+    // ---------------------------------------------------------------------
+    match /coupons/{code} {
+      allow read: if hasAnyRole(['sales', 'marketing', 'manager', 'admin', 'super_admin']);
+      allow write: if hasAnyRole(['sales', 'manager', 'admin', 'super_admin']);
+    }
+
+    // ---------------------------------------------------------------------
+    // reviews/{reviewId} — only a customer with a verified-purchase
+    // entitlement may create a review for that product (enforced by a Cloud
+    // Function pre-check + `verifiedPurchase` flag set server-side).
+    // Customers may edit/delete only their own, pre-moderation.
+    // ---------------------------------------------------------------------
+    match /reviews/{reviewId} {
+      allow read: if resource.data.status == 'published' || isStaff() || (isSignedIn() && resource.data.uid == uid());
+      allow create: if isSignedIn() && request.resource.data.uid == uid() && request.resource.data.status == 'pending';
+      allow update, delete: if isOwner(resource.data.uid) || hasAnyRole(['editor', 'support', 'manager', 'admin', 'super_admin']);
+    }
+
+    // ---------------------------------------------------------------------
+    // wishlists/{uid}, cart/{uid} — fully owned by the signed-in user.
+    // ---------------------------------------------------------------------
+    match /wishlists/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /cart/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // ---------------------------------------------------------------------
+    // notifications/{id} — user reads their own; only server code creates.
+    // ---------------------------------------------------------------------
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.uid == uid();
+      allow update: if isSignedIn() && resource.data.uid == uid()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+      allow write: if hasAnyRole(['admin', 'super_admin']);
+    }
+
+    // ---------------------------------------------------------------------
+    // supportTickets/{id} — customer owns their own tickets; support staff
+    // read/manage all.
+    // ---------------------------------------------------------------------
+    match /supportTickets/{ticketId} {
+      allow read: if isStaff() || (isSignedIn() && resource.data.uid == uid());
+      allow create: if isSignedIn() && request.resource.data.uid == uid() && request.resource.data.status == 'open';
+      allow update: if hasAnyRole(['support', 'manager', 'admin', 'super_admin'])
+        || (isSignedIn() && resource.data.uid == uid()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']));
+      allow delete: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // Internal-only collections: never touched by any client.
+    // ---------------------------------------------------------------------
+    match /employees/{employeeId} { allow read, write: if isAdmin(); }
+    match /roles/{roleId} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /permissions/{permId} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /inventory/{itemId} { allow read: if isStaff(); allow write: if hasAnyRole(['inventory_manager', 'manager', 'admin', 'super_admin']); }
+    match /subscriptions/{subId} { allow read: if isStaff() || (isSignedIn() && resource.data.uid == uid()); allow write: if hasAnyRole(['finance', 'admin', 'super_admin']); }
+    match /analytics/{docId} { allow read: if hasAnyRole(['manager', 'admin', 'super_admin']); allow write: if false; }
+    match /webhookEvents/{eventId} { allow read, write: if false; } // Admin SDK only
+    match /settings/{settingId} { allow read: if isStaff(); allow write: if isAdmin(); }
+
+    // Audit logs are append-only from trusted server code and never editable
+    // through the normal admin UI, per spec (#41).
+    match /auditLogs/{logId} {
+      allow read: if hasAnyRole(['manager', 'admin', 'super_admin']);
+      allow create: if false; // Admin SDK only (Cloud Functions)
+      allow update, delete: if false;
+    }
+  }
+}

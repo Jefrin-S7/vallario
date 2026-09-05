@@ -1,0 +1,169 @@
+@import "tailwindcss";
+
+:root {
+  /* VALLARIO design tokens */
+  --v-ink: #0a0a0d;          /* near-black base */
+  --v-charcoal: #131318;     /* elevated dark surface */
+  --v-charcoal-2: #1b1b22;   /* dark card surface */
+  --v-ivory: #f8f6f2;        /* light section base */
+  --v-ivory-2: #f1eee7;      /* light card surface */
+  --v-violet: #6c4cf1;       /* primary brand accent (AI / automation) */
+  --v-violet-2: #8f74ff;     /* violet hover/glow */
+  --v-gold: #c9a24b;         /* premium bundle accent */
+  --v-gold-2: #e6c778;
+  --v-emerald: #2fbf71;      /* catalog / growth accent */
+  --v-crimson: #e14b4b;      /* ebooks / knowledge accent */
+  --v-steel: #9aa0ab;        /* neutral / logo-metal tone */
+  --v-line: rgba(255, 255, 255, 0.09);
+  --v-line-dark: rgba(10, 10, 13, 0.1);
+
+  --font-display: "Space Grotesk", "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+}
+
+@theme inline {
+  --color-ink: var(--v-ink);
+  --color-charcoal: var(--v-charcoal);
+  --color-charcoal-2: var(--v-charcoal-2);
+  --color-ivory: var(--v-ivory);
+  --color-ivory-2: var(--v-ivory-2);
+  --color-violet: var(--v-violet);
+  --color-violet-2: var(--v-violet-2);
+  --color-gold: var(--v-gold);
+  --color-gold-2: var(--v-gold-2);
+  --color-emerald: var(--v-emerald);
+  --color-crimson: var(--v-crimson);
+  --color-steel: var(--v-steel);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--v-ivory);
+  color: var(--v-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+::selection {
+  background: var(--v-violet);
+  color: white;
+}
+
+.v-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
+}
+
+@media (min-width: 768px) {
+  .v-container {
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+  }
+}
+
+.v-eyebrow {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.v-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  padding: 0.85rem 1.6rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.v-btn-primary {
+  background: var(--v-violet);
+  color: white;
+  box-shadow: 0 8px 24px -8px rgba(108, 76, 241, 0.55);
+}
+.v-btn-primary:hover {
+  background: var(--v-violet-2);
+  transform: translateY(-1px);
+}
+
+.v-btn-ghost {
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--v-line-dark);
+}
+.v-btn-ghost:hover {
+  border-color: currentColor;
+}
+
+.v-btn-light {
+  background: white;
+  color: var(--v-ink);
+}
+.v-btn-light:hover {
+  transform: translateY(-1px);
+}
+
+.v-input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--v-line-dark);
+  background: white;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.v-input:focus-visible {
+  border-color: var(--v-violet);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--v-violet) 18%, transparent);
+}
+
+.v-card {
+  border-radius: 1.25rem;
+  border: 1px solid var(--v-line-dark);
+  background: white;
+}
+
+.v-scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.v-scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes v-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+.v-float {
+  animation: v-float 6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-float { animation: none; }
+  html { scroll-behavior: auto; }
+}
